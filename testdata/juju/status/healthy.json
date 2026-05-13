@@ -1,0 +1,122 @@
+{
+  "model": {
+    "name": "prod",
+    "controller": "prod-controller",
+    "cloud": "localhost",
+    "region": "default",
+    "version": "3.6.0",
+    "model-status": {
+      "current": "available"
+    }
+  },
+  "machines": {
+    "0": {
+      "instance-id": "manual:0",
+      "dns-name": "10.0.0.10",
+      "ip-addresses": ["10.0.0.10"],
+      "machine-status": {
+        "current": "running",
+        "message": "running"
+      }
+    },
+    "1": {
+      "instance-id": "manual:1",
+      "dns-name": "10.0.0.11",
+      "ip-addresses": ["10.0.0.11"],
+      "machine-status": {
+        "current": "running",
+        "message": "running"
+      }
+    }
+  },
+  "applications": {
+    "api-server": {
+      "charm": "api-server",
+      "charm-channel": "latest/stable",
+      "charm-version": "42",
+      "application-status": {
+        "current": "active",
+        "message": "ready"
+      },
+      "units": {
+        "api-server/0": {
+          "machine": "1",
+          "public-address": "10.0.0.21",
+          "opened-ports": ["8080/tcp"],
+          "workload-status": {
+            "current": "active",
+            "message": "ready"
+          },
+          "juju-status": {
+            "current": "idle"
+          }
+        }
+      },
+      "relations": {
+        "database": ["postgresql"]
+      }
+    },
+    "postgresql": {
+      "charm": "postgresql",
+      "charm-channel": "14/stable",
+      "charm-version": "253",
+      "application-status": {
+        "current": "active",
+        "message": "primary ready"
+      },
+      "units": {
+        "postgresql/0": {
+          "machine": "0",
+          "public-address": "10.0.0.20",
+          "opened-ports": ["5432/tcp"],
+          "workload-status": {
+            "current": "active",
+            "message": "primary"
+          },
+          "juju-status": {
+            "current": "idle"
+          },
+          "leader": true
+        }
+      },
+      "relations": {
+        "db": ["api-server"]
+      }
+    }
+  },
+  "relations": [
+    {
+      "endpoints": [
+        {
+          "application-name": "postgresql",
+          "name": "db",
+          "role": "provider",
+          "interface": "postgresql_client"
+        },
+        {
+          "application-name": "api-server",
+          "name": "database",
+          "role": "requirer",
+          "interface": "postgresql_client"
+        }
+      ]
+    }
+  ],
+  "storage": {
+    "pgdata/0": {
+      "kind": "filesystem",
+      "status": {
+        "current": "attached",
+        "message": "attached"
+      },
+      "attachments": {
+        "units": {
+          "postgresql/0": {
+            "location": "/var/lib/postgresql",
+            "machine": "0"
+          }
+        }
+      }
+    }
+  }
+}
