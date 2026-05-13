@@ -16,8 +16,12 @@ func TestBuildGraph(t *testing.T) {
 	if _, ok := graph.Nodes[UnitID("prod", "postgresql/0")]; !ok {
 		t.Fatal("missing unit node")
 	}
-	if _, ok := graph.Nodes[MachineID("prod", "0")]; !ok {
+	machine, ok := graph.Nodes[MachineID("prod", "0")]
+	if !ok {
 		t.Fatal("missing machine node")
+	}
+	if machine.Metadata["machine_id"] != "0" {
+		t.Fatalf("machine_id metadata = %q, want 0", machine.Metadata["machine_id"])
 	}
 	if _, ok := graph.Nodes[StorageID("prod", "pgdata/0")]; !ok {
 		t.Fatal("missing storage node")

@@ -155,6 +155,7 @@ func BuildGraph(state State) Graph {
 			Status:        machine.Status,
 			StatusMessage: machine.StatusMessage,
 			Metadata: map[string]string{
+				"machine_id":  machine.ID,
 				"instance_id": machine.InstanceID,
 				"dns_name":    machine.DNSName,
 				"ip_address":  machine.IPAddress,

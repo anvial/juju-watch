@@ -8,6 +8,7 @@ type KeyMap struct {
 	Pause    key.Binding
 	NextView key.Binding
 	Search   key.Binding
+	SSH      key.Binding
 	Focus    key.Binding
 	Help     key.Binding
 	Up       key.Binding
@@ -31,6 +32,7 @@ func DefaultKeyMap() KeyMap {
 		Pause:    key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "pause")),
 		NextView: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "view")),
 		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+		SSH:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "ssh")),
 		Focus:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "focus")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Up:       key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "select")),
@@ -49,13 +51,13 @@ func DefaultKeyMap() KeyMap {
 }
 
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Refresh, k.Pause, k.NextView, k.Search, k.Focus, k.Help, k.Quit}
+	return []key.Binding{k.Refresh, k.Pause, k.NextView, k.Search, k.SSH, k.Focus, k.Help, k.Quit}
 }
 
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Refresh, k.Pause, k.NextView, k.Search},
-		{k.Focus, k.Up, k.Down, k.Left, k.Right},
+		{k.SSH, k.Focus, k.Up, k.Down, k.Left, k.Right},
 		{k.PanLeft, k.PanDown, k.PanUp, k.PanRight},
 		{k.PageUp, k.PageDown, k.Home, k.End},
 		{k.Help, k.Quit},

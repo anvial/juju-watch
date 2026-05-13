@@ -12,6 +12,7 @@ type Styles struct {
 	Title             lipgloss.Style
 	Dim               lipgloss.Style
 	Selected          lipgloss.Style
+	SelectionSweep    lipgloss.Style
 	Changed           lipgloss.Style
 	Active            lipgloss.Style
 	Waiting           lipgloss.Style
@@ -24,12 +25,20 @@ type Styles struct {
 	RelationSelected  lipgloss.Style
 	Placement         lipgloss.Style
 	PlacementSelected lipgloss.Style
+	placementPalette  []lipgloss.Style
 }
 
 func NewStyles() Styles {
 	text := lipgloss.AdaptiveColor{Light: "0", Dark: "15"}
 	muted := lipgloss.AdaptiveColor{Light: "240", Dark: "250"}
 	panel := lipgloss.AdaptiveColor{Light: "244", Dark: "245"}
+
+	placementPalette := []lipgloss.Style{
+		lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "31", Dark: "117"}),
+		lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "32", Dark: "81"}),
+		lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "37", Dark: "123"}),
+		lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "38", Dark: "159"}),
+	}
 
 	return Styles{
 		Header:            lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("0")).Padding(0, 1),
@@ -38,6 +47,7 @@ func NewStyles() Styles {
 		Title:             lipgloss.NewStyle().Bold(true).Foreground(text),
 		Dim:               lipgloss.NewStyle().Foreground(muted),
 		Selected:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("4")),
+		SelectionSweep:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("13")),
 		Changed:           lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14")),
 		Active:            lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
 		Waiting:           lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
@@ -48,9 +58,21 @@ func NewStyles() Styles {
 		Edge:              lipgloss.NewStyle().Foreground(panel),
 		Relation:          lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true),
 		RelationSelected:  lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true).Underline(true),
-		Placement:         lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "31", Dark: "117"}),
+		Placement:         placementPalette[0],
 		PlacementSelected: lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true),
+		placementPalette:  placementPalette,
 	}
+}
+
+func (s Styles) PlacementPalette(index int) lipgloss.Style {
+	if len(s.placementPalette) == 0 {
+		return s.Placement
+	}
+	index %= len(s.placementPalette)
+	if index < 0 {
+		index += len(s.placementPalette)
+	}
+	return s.placementPalette[index]
 }
 
 func (s Styles) Status(status domain.Status) lipgloss.Style {

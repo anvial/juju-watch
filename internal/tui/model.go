@@ -40,6 +40,8 @@ type Model struct {
 
 	keys   KeyMap
 	styles Styles
+	ssh    *sshPopup
+	sshRun sshStarter
 	help   help.Model
 	search textinput.Model
 	spin   spinner.Model
@@ -48,22 +50,23 @@ type Model struct {
 	height int
 	view   ViewMode
 
-	graph      domain.Graph
-	hasGraph   bool
-	changes    diff.Result
-	animations animation.Store
-	changedIDs map[string]bool
-	events     []domain.Event
-	selectedID string
-	panX       int
-	panY       int
-	paused     bool
-	polling    bool
-	searching  bool
-	showHelp   bool
-	lastPollAt time.Time
-	lastErr    error
-	layoutErr  error
+	graph          domain.Graph
+	hasGraph       bool
+	changes        diff.Result
+	animations     animation.Store
+	changedIDs     map[string]bool
+	events         []domain.Event
+	selectedID     string
+	selectionFrame int
+	panX           int
+	panY           int
+	paused         bool
+	polling        bool
+	searching      bool
+	showHelp       bool
+	lastPollAt     time.Time
+	lastErr        error
+	layoutErr      error
 }
 
 func New(cfg cli.Config, poller *juju.Poller, engine layout.Engine) Model {
@@ -81,6 +84,7 @@ func New(cfg cli.Config, poller *juju.Poller, engine layout.Engine) Model {
 		layout:     engine,
 		keys:       DefaultKeyMap(),
 		styles:     NewStyles(),
+		sshRun:     realSSHStarter{},
 		help:       help.New(),
 		search:     search,
 		spin:       spin,

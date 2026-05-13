@@ -42,7 +42,7 @@ func main() {
 		Storage:   cfg.Storage,
 	})
 	model := tui.New(cfg, poller, layout.New(cfg.Layout))
-	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

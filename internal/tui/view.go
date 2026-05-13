@@ -23,6 +23,7 @@ const (
 	machineIcon                = "💻"
 	relationLabelWidth         = 14
 	selectedRelationLabelWidth = 32
+	selectionSweepLength       = 5
 )
 
 func (m Model) View() string {
@@ -56,6 +57,7 @@ func (m Model) View() string {
 	}
 
 	body := m.renderBody(bodyHeight)
+	body = m.renderSSHOverlay(body, m.width, bodyHeight)
 	parts := []string{header, body}
 	if searchView != "" {
 		parts = append(parts, searchView)
@@ -242,6 +244,7 @@ func (m Model) drawApplication(canvas *Canvas, node domain.Node) {
 	style := m.nodeStyle(node)
 	selected := m.selectedID == node.ID
 	canvas.Box(x, y, box.width, box.height, style, selected)
+	m.drawBoxSweep(canvas, box, DoubleBorderRunes, selected)
 	m.drawApplicationTitle(canvas, x, y, box.width, applicationIcon+" "+node.Label, style)
 
 	status := string(node.Status)
@@ -274,6 +277,9 @@ func (m Model) drawApplication(canvas *Canvas, node domain.Node) {
 			text += " " + unit.StatusMessage
 		}
 		canvas.Text(x+2, row, truncate(text, box.width-4), rowStyle)
+		if m.selectedID == unitID {
+			m.drawRowSweepMarker(canvas, x+1, row)
+		}
 		row++
 
 		storageIDs := m.storageIDsForUnit(unitID)
@@ -297,6 +303,9 @@ func (m Model) drawApplication(canvas *Canvas, node domain.Node) {
 				}
 			}
 			canvas.Text(x+4, row, truncate(text, box.width-6), rowStyle)
+			if m.selectedID == storageID {
+				m.drawRowSweepMarker(canvas, x+3, row)
+			}
 			row++
 		}
 	}
@@ -311,10 +320,16 @@ func (m Model) drawMachine(canvas *Canvas, node domain.Node) {
 	x, y := box.x, box.y
 	expanded := box.width > appBoxWidth+4 || box.height > max(5, 5+len(units))
 	style := m.nodeStyle(node)
-	canvas.Box(x, y, box.width, box.height, style, m.selectedID == node.ID)
-	canvas.Text(x+2, y+1, truncate(machineIcon+" "+node.Label+" "+StatusSymbol(node.Status), box.width-4), style)
-	canvas.Text(x+2, y+2, truncate(string(node.Status)+" "+node.StatusMessage, box.width-4), m.styles.Status(node.Status))
-	row := y + 3
+	selected := m.selectedID == node.ID
+	canvas.Box(x, y, box.width, box.height, style, selected)
+	m.drawBoxSweep(canvas, box, DoubleBorderRunes, selected)
+	m.drawApplicationTitle(canvas, x, y, box.width, machineIcon+" "+node.Label, style)
+	status := string(node.Status)
+	if node.StatusMessage != "" {
+		status += " " + node.StatusMessage
+	}
+	canvas.Text(x+2, y+1, truncate(fmt.Sprintf("%s %s", status, StatusSymbol(node.Status)), box.width-4), m.styles.Status(node.Status))
+	row := y + 2
 	if addr := node.Metadata["ip_address"]; addr != "" {
 		canvas.Text(x+2, row, truncate(addr, box.width-4), m.styles.Dim)
 		row++
@@ -336,12 +351,17 @@ func (m Model) drawMachine(canvas *Canvas, node domain.Node) {
 			rowStyle = m.styles.Selected
 		}
 		canvas.Text(x+2, row+index, truncate(StatusSymbol(unit.Status)+" "+unit.Label, box.width-4), rowStyle)
+		if m.selectedID == unitID {
+			m.drawRowSweepMarker(canvas, x+1, row+index)
+		}
 	}
 }
 
 func (m Model) drawCompactNode(canvas *Canvas, node domain.Node, x, y int) {
 	style := m.nodeStyle(node)
-	canvas.Box(x, y, cardWidth, 5, style, m.selectedID == node.ID)
+	selected := m.selectedID == node.ID
+	canvas.Box(x, y, cardWidth, 5, style, selected)
+	m.drawBoxSweep(canvas, renderBox{x: x, y: y, width: cardWidth, height: 5}, DoubleBorderRunes, selected)
 	canvas.Text(x+2, y+1, truncate(node.Label+" "+StatusSymbol(node.Status), cardWidth-4), style)
 	canvas.Text(x+2, y+2, truncate(string(node.Type), cardWidth-4), m.styles.Dim)
 	canvas.Text(x+2, y+3, truncate(string(node.Status)+" "+node.StatusMessage, cardWidth-4), m.styles.Status(node.Status))
@@ -359,6 +379,7 @@ func (m Model) drawStorage(canvas *Canvas, node domain.Node) {
 		border = HeavyBorderRunes
 	}
 	canvas.BoxWithBorder(x, y, box.width, box.height, style, border)
+	m.drawBoxSweep(canvas, box, border, m.selectedID == node.ID)
 	m.drawStorageTitle(canvas, x, y, box.width, storageIcon+" "+node.Label, style, border.Horizontal)
 
 	detail := firstNonEmpty(node.Metadata["location"], node.Metadata["unit"], node.Metadata["kind"])
@@ -421,17 +442,22 @@ func (m Model) drawRelation(canvas *Canvas, edge domain.Edge) {
 		canvas.Put(point.x, point.y, '╋', style)
 	}
 	canvas.Put(route.arrowAt.x, route.arrowAt.y, route.arrow, style)
+	if m.selectedID == edge.ID {
+		m.drawRouteSweep(canvas, route, relationSweepGlyphs(), true)
+	}
 	if route.label != "" && route.labelAt != nil {
 		canvas.Text(route.labelAt.x, route.labelAt.y, route.label, style)
 	}
 }
 
 type placementEdge struct {
-	sourceID string
-	targetID string
-	label    string
-	unitIDs  []string
-	status   domain.Status
+	appID      string
+	unitID     string
+	machineID  string
+	label      string
+	status     domain.Status
+	groupIndex int
+	groupSize  int
 }
 
 type routePoint struct {
@@ -455,6 +481,175 @@ type relationRoute struct {
 type relationAnchor struct {
 	point routePoint
 	arrow rune
+}
+
+type sweepCell struct {
+	point routePoint
+	ch    rune
+}
+
+type routeGlyphs struct {
+	horizontal rune
+	vertical   rune
+	joint      func(relationRoute, routePoint) rune
+}
+
+func relationSweepGlyphs() routeGlyphs {
+	return routeGlyphs{
+		horizontal: '━',
+		vertical:   '┃',
+		joint: func(relationRoute, routePoint) rune {
+			return '╋'
+		},
+	}
+}
+
+func placementSweepGlyphs() routeGlyphs {
+	return routeGlyphs{
+		horizontal: '─',
+		vertical:   '│',
+		joint:      placementJoint,
+	}
+}
+
+func (m Model) drawBoxSweep(canvas *Canvas, box renderBox, border BorderRunes, selected bool) {
+	if !selected || !m.selectionAnimationActive() {
+		return
+	}
+	for _, cell := range boxSweepCells(box, border, m.selectionFrame) {
+		canvas.Put(cell.point.x, cell.point.y, cell.ch, m.styles.SelectionSweep)
+	}
+}
+
+func (m Model) drawRouteSweep(canvas *Canvas, route relationRoute, glyphs routeGlyphs, active bool) {
+	if !active || !m.selectionAnimationActive() {
+		return
+	}
+	for _, cell := range routeSweepCells(route, glyphs, m.selectionFrame) {
+		canvas.Put(cell.point.x, cell.point.y, cell.ch, m.styles.SelectionSweep)
+	}
+}
+
+func (m Model) drawRowSweepMarker(canvas *Canvas, x, y int) {
+	if !m.selectionAnimationActive() {
+		canvas.Put(x, y, '▸', m.styles.Selected)
+		return
+	}
+	markers := []rune{'▸', '▸', '▶', '▸'}
+	canvas.Put(x, y, markers[(m.selectionFrame/4)%len(markers)], m.styles.SelectionSweep)
+}
+
+func boxSweepCells(box renderBox, border BorderRunes, frame int) []sweepCell {
+	return sweepCells(boxBorderPath(box, border), frame)
+}
+
+func boxBorderPath(box renderBox, border BorderRunes) []sweepCell {
+	if box.width < 2 || box.height < 2 {
+		return nil
+	}
+	right := box.x + box.width - 1
+	bottom := box.y + box.height - 1
+	path := []sweepCell{}
+	for x := box.x; x <= right; x++ {
+		ch := border.Horizontal
+		if x == box.x {
+			ch = border.TopLeft
+		} else if x == right {
+			ch = border.TopRight
+		}
+		path = append(path, sweepCell{point: routePoint{x: x, y: box.y}, ch: ch})
+	}
+	for y := box.y + 1; y <= bottom-1; y++ {
+		path = append(path, sweepCell{point: routePoint{x: right, y: y}, ch: border.Vertical})
+	}
+	for x := right; x >= box.x; x-- {
+		ch := border.Horizontal
+		if x == right {
+			ch = border.BottomRight
+		} else if x == box.x {
+			ch = border.BottomLeft
+		}
+		path = append(path, sweepCell{point: routePoint{x: x, y: bottom}, ch: ch})
+	}
+	for y := bottom - 1; y >= box.y+1; y-- {
+		path = append(path, sweepCell{point: routePoint{x: box.x, y: y}, ch: border.Vertical})
+	}
+	return path
+}
+
+func routeSweepCells(route relationRoute, glyphs routeGlyphs, frame int) []sweepCell {
+	return sweepCells(routePathCells(route, glyphs), frame)
+}
+
+func routePathCells(route relationRoute, glyphs routeGlyphs) []sweepCell {
+	points := routePathPoints(route)
+	cells := make([]sweepCell, 0, len(points))
+	for index, point := range points {
+		cells = append(cells, sweepCell{point: point, ch: routePathGlyph(route, points, index, glyphs)})
+	}
+	return cells
+}
+
+func routePathPoints(route relationRoute) []routePoint {
+	points := []routePoint{}
+	for i := 0; i < len(route.points)-1; i++ {
+		from := route.points[i]
+		to := route.points[i+1]
+		if from == to {
+			continue
+		}
+		if len(points) == 0 {
+			points = append(points, from)
+		}
+		current := from
+		stepX := sign(to.x - from.x)
+		stepY := sign(to.y - from.y)
+		for current != to {
+			if current.x != to.x {
+				current.x += stepX
+			} else if current.y != to.y {
+				current.y += stepY
+			} else {
+				break
+			}
+			points = append(points, current)
+		}
+	}
+	return points
+}
+
+func routePathGlyph(route relationRoute, points []routePoint, index int, glyphs routeGlyphs) rune {
+	point := points[index]
+	if point == route.arrowAt {
+		return route.arrow
+	}
+	for _, joint := range route.joints() {
+		if point == joint {
+			return glyphs.joint(route, point)
+		}
+	}
+	vertical := (index > 0 && points[index-1].x == point.x && points[index-1].y != point.y) ||
+		(index+1 < len(points) && points[index+1].x == point.x && points[index+1].y != point.y)
+	if vertical {
+		return glyphs.vertical
+	}
+	return glyphs.horizontal
+}
+
+func sweepCells(path []sweepCell, frame int) []sweepCell {
+	if len(path) == 0 {
+		return nil
+	}
+	start := frame % len(path)
+	if start < 0 {
+		start += len(path)
+	}
+	length := min(selectionSweepLength, len(path))
+	cells := make([]sweepCell, 0, length)
+	for i := 0; i < length; i++ {
+		cells = append(cells, path[(start+i)%len(path)])
+	}
+	return cells
 }
 
 func (r relationRoute) segments() []routeSegment {
@@ -763,65 +958,115 @@ func (m Model) drawPlacement(canvas *Canvas, edge placementEdge) {
 	if !ok {
 		return
 	}
-	style := m.styles.Placement
-	if m.placementSelected(edge) {
-		style = m.styles.PlacementSelected
-	}
+	style := m.placementStyle(edge)
 	for _, segment := range route.segments() {
 		if segment.from.y == segment.to.y {
-			canvas.HLine(segment.from.x, segment.to.x, segment.from.y, '╌', style)
+			canvas.HLine(segment.from.x, segment.to.x, segment.from.y, '─', style)
 			continue
 		}
 		if segment.from.x == segment.to.x {
-			canvas.VLine(segment.from.x, segment.from.y, segment.to.y, '╎', style)
+			canvas.VLine(segment.from.x, segment.from.y, segment.to.y, '│', style)
 		}
 	}
 	for _, point := range route.joints() {
-		canvas.Put(point.x, point.y, '┼', style)
+		canvas.Put(point.x, point.y, placementJoint(route, point), style)
 	}
 	canvas.Put(route.arrowAt.x, route.arrowAt.y, route.arrow, style)
+	m.drawRouteSweep(canvas, route, placementSweepGlyphs(), m.placementSweepActive(edge))
 	if route.label != "" && route.labelAt != nil {
 		canvas.Text(route.labelAt.x, route.labelAt.y, route.label, style)
 	}
 }
 
+func (m Model) placementStyle(edge placementEdge) lipgloss.Style {
+	if m.selectedID == edge.unitID {
+		return m.styles.PlacementSelected
+	}
+	style := m.styles.PlacementPalette(edge.groupIndex)
+	if m.selectedID == edge.machineID || m.selectedID == edge.appID {
+		style = style.Bold(true)
+	}
+	return style
+}
+
+func placementJoint(route relationRoute, point routePoint) rune {
+	for i := 1; i < len(route.points)-1; i++ {
+		if route.points[i] != point {
+			continue
+		}
+		prev := route.points[i-1]
+		next := route.points[i+1]
+		left := prev.x < point.x || next.x < point.x
+		right := prev.x > point.x || next.x > point.x
+		up := prev.y < point.y || next.y < point.y
+		down := prev.y > point.y || next.y > point.y
+		switch {
+		case right && down:
+			return '╭'
+		case left && down:
+			return '╮'
+		case right && up:
+			return '╰'
+		case left && up:
+			return '╯'
+		case left || right:
+			return '─'
+		case up || down:
+			return '│'
+		}
+	}
+	return '─'
+}
+
 func (m Model) placementRoute(edge placementEdge, width, height int) (relationRoute, bool) {
-	sourceBox, ok := m.nodeRenderBoxIn(edge.sourceID, width, height)
+	sourceBox, ok := m.nodeRenderBoxIn(edge.appID, width, height)
 	if !ok {
 		return relationRoute{}, false
 	}
-	targetBox, ok := m.nodeRenderBoxIn(edge.targetID, width, height)
+	targetBox, ok := m.nodeRenderBoxIn(edge.machineID, width, height)
+	if !ok {
+		return relationRoute{}, false
+	}
+	sourceY, ok := m.applicationUnitRow(edge.appID, edge.unitID, sourceBox)
+	if !ok {
+		return relationRoute{}, false
+	}
+	targetY, ok := m.machineUnitRow(edge.machineID, edge.unitID, targetBox)
 	if !ok {
 		return relationRoute{}, false
 	}
 	sourceLeft := sourceBox.x+sourceBox.width/2 <= targetBox.x+targetBox.width/2
-	start := routePoint{x: sourceBox.x + sourceBox.width, y: relationAnchorY(sourceBox)}
-	target := routePoint{x: targetBox.x - 1, y: relationAnchorY(targetBox)}
+	start := routePoint{x: sourceBox.x + sourceBox.width, y: sourceY}
+	target := routePoint{x: targetBox.x - 1, y: targetY}
 	arrow := '▶'
-	laneX := (start.x + target.x) / 2
+	midpointX := (start.x + target.x) / 2
 	if !sourceLeft {
-		start = routePoint{x: sourceBox.x - 1, y: relationAnchorY(sourceBox)}
-		target = routePoint{x: targetBox.x + targetBox.width, y: relationAnchorY(targetBox)}
+		start = routePoint{x: sourceBox.x - 1, y: sourceY}
+		target = routePoint{x: targetBox.x + targetBox.width, y: targetY}
 		arrow = '◀'
-		laneX = (target.x + start.x) / 2
+		midpointX = (target.x + start.x) / 2
 	}
 	boxes := m.topologyRenderBoxesIn(width, height)
-	route := relationRoute{
-		points: cleanRoutePoints([]routePoint{
-			start,
-			{x: laneX, y: start.y},
-			{x: laneX, y: target.y},
-			target,
-		}),
-		arrow:   arrow,
-		arrowAt: target,
-	}
-	if routeClear(route, boxes, width, height) {
+
+	for _, laneX := range placementLaneXCandidates(midpointX, edge.groupIndex, edge.groupSize, width) {
+		route := relationRoute{
+			points: cleanRoutePoints([]routePoint{
+				start,
+				{x: laneX, y: start.y},
+				{x: laneX, y: target.y},
+				target,
+			}),
+			arrow:   arrow,
+			arrowAt: target,
+		}
+		if !routeClear(route, boxes, width, height) {
+			continue
+		}
 		route.label, route.labelAt = placementLabel(edge.label, route, boxes, width, height)
 		return route, true
 	}
 
-	for _, laneY := range placementLaneCandidates(start.y, target.y, height) {
+	for _, laneY := range placementLaneYCandidates(start.y, target.y, sourceBox, targetBox, edge.groupIndex, edge.groupSize, height) {
 		route := relationRoute{
 			points: cleanRoutePoints([]routePoint{
 				start,
@@ -880,22 +1125,83 @@ func placementLabel(label string, route relationRoute, boxes []renderBox, width,
 	return "", nil
 }
 
-func placementLaneCandidates(startY, targetY, height int) []int {
+func placementLaneXCandidates(midpoint, groupIndex, groupSize, width int) []int {
+	return placementStaggeredLaneCandidates([]int{midpoint}, groupIndex, groupSize, width)
+}
+
+func placementLaneYCandidates(startY, targetY int, sourceBox, targetBox renderBox, groupIndex, groupSize, height int) []int {
 	mid := (startY + targetY) / 2
-	preferred := []int{mid, startY + 1, targetY - 1}
+	preferred := []int{
+		min(sourceBox.y, targetBox.y) - 2,
+		max(sourceBox.y+sourceBox.height, targetBox.y+targetBox.height) + 1,
+		mid,
+		startY + 1,
+		targetY - 1,
+	}
 	for delta := 0; delta < height; delta++ {
 		preferred = append(preferred, mid-delta, mid+delta)
 	}
+	return placementStaggeredLaneCandidates(preferred, groupIndex, groupSize, height)
+}
+
+func placementStaggeredLaneCandidates(bases []int, groupIndex, groupSize, limit int) []int {
+	if limit <= 0 {
+		return nil
+	}
 	seen := map[int]bool{}
 	out := []int{}
-	for _, y := range preferred {
-		if y < 0 || y >= height || seen[y] {
-			continue
+	maxRadius := limit
+	for _, base := range bases {
+		for _, lane := range placementLanesAround(base, groupIndex, groupSize, maxRadius) {
+			if lane < 0 || lane >= limit || seen[lane] {
+				continue
+			}
+			seen[lane] = true
+			out = append(out, lane)
 		}
-		seen[y] = true
-		out = append(out, y)
 	}
 	return out
+}
+
+func placementLanesAround(base, groupIndex, groupSize, maxRadius int) []int {
+	offset := placementGroupOffset(groupIndex, groupSize)
+	if groupSize <= 1 {
+		out := []int{base}
+		for radius := 1; radius <= maxRadius; radius++ {
+			out = append(out, base-radius, base+radius)
+		}
+		return out
+	}
+	stride := groupSize * 2
+	maxSteps := maxRadius/stride + 2
+	offsets := []int{offset}
+	for step := 1; step <= maxSteps; step++ {
+		right := offset + step*stride
+		left := offset - step*stride
+		if abs(right) <= abs(left) {
+			offsets = append(offsets, right, left)
+		} else {
+			offsets = append(offsets, left, right)
+		}
+	}
+	out := make([]int, 0, len(offsets))
+	for _, candidateOffset := range offsets {
+		out = append(out, base+candidateOffset)
+	}
+	return out
+}
+
+func placementGroupOffset(groupIndex, groupSize int) int {
+	if groupSize <= 1 {
+		return 0
+	}
+	if groupIndex < 0 {
+		groupIndex = 0
+	}
+	if groupIndex >= groupSize {
+		groupIndex = groupSize - 1
+	}
+	return 2*groupIndex - (groupSize - 1)
 }
 
 func (m Model) renderInspector(width, height int) string {
@@ -1023,11 +1329,7 @@ func (m Model) storageIDsForUnit(unitID string) []string {
 }
 
 func (m Model) placementEdges() []placementEdge {
-	type key struct {
-		appID     string
-		machineID string
-	}
-	grouped := map[key][]string{}
+	edges := []placementEdge{}
 	for _, edge := range m.graph.Edges {
 		if edge.Type != domain.EdgeUnitOnMachine {
 			continue
@@ -1036,39 +1338,35 @@ func (m Model) placementEdges() []placementEdge {
 		if appID == "" {
 			continue
 		}
-		group := key{appID: appID, machineID: edge.TargetID}
-		grouped[group] = append(grouped[group], edge.SourceID)
-	}
-	keys := make([]key, 0, len(grouped))
-	for key := range grouped {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].appID == keys[j].appID {
-			return keys[i].machineID < keys[j].machineID
-		}
-		return keys[i].appID < keys[j].appID
-	})
-	edges := []placementEdge{}
-	for _, key := range keys {
-		unitIDs := grouped[key]
-		sort.Strings(unitIDs)
-		label := "runs on"
-		if len(unitIDs) > 1 {
-			label = fmt.Sprintf("runs on %d", len(unitIDs))
-		}
-		status := domain.StatusActive
-		for _, unitID := range unitIDs {
-			unit := m.graph.Nodes[unitID]
-			status = domain.WorstStatus(status, unit.Status)
-		}
+		unit := m.graph.Nodes[edge.SourceID]
 		edges = append(edges, placementEdge{
-			sourceID: key.appID,
-			targetID: key.machineID,
-			label:    label,
-			unitIDs:  unitIDs,
-			status:   status,
+			appID:     appID,
+			unitID:    edge.SourceID,
+			machineID: edge.TargetID,
+			label:     unit.Label,
+			status:    unit.Status,
 		})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].appID != edges[j].appID {
+			return edges[i].appID < edges[j].appID
+		}
+		if edges[i].machineID != edges[j].machineID {
+			return edges[i].machineID < edges[j].machineID
+		}
+		return edges[i].unitID < edges[j].unitID
+	})
+	for start := 0; start < len(edges); {
+		end := start + 1
+		for end < len(edges) && edges[end].appID == edges[start].appID && edges[end].machineID == edges[start].machineID {
+			end++
+		}
+		groupSize := end - start
+		for index := start; index < end; index++ {
+			edges[index].groupIndex = index - start
+			edges[index].groupSize = groupSize
+		}
+		start = end
 	}
 	return edges
 }
@@ -1110,15 +1408,29 @@ func (m Model) applicationCompactHeight(appID string) int {
 }
 
 func (m Model) placementSelected(edge placementEdge) bool {
-	if m.selectedID == edge.sourceID || m.selectedID == edge.targetID {
-		return true
-	}
-	for _, unitID := range edge.unitIDs {
-		if m.selectedID == unitID {
-			return true
+	return m.selectedID == edge.unitID || m.selectedID == edge.machineID || m.selectedID == edge.appID
+}
+
+func (m Model) placementSweepActive(edge placementEdge) bool {
+	return m.selectedID == edge.unitID
+}
+
+func (m Model) applicationUnitRow(appID, unitID string, box renderBox) (int, bool) {
+	for _, row := range m.applicationSelectableRows(appID, box) {
+		if row.id == unitID {
+			return row.y, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+func (m Model) machineUnitRow(machineID, unitID string, box renderBox) (int, bool) {
+	for _, row := range m.machineSelectableRows(machineID, box) {
+		if row.id == unitID {
+			return row.y, true
+		}
+	}
+	return 0, false
 }
 
 func (m Model) topologyNodeIDs() []string {
@@ -1394,10 +1706,14 @@ func (m Model) applicationContentOverflows(node domain.Node, box renderBox) bool
 
 func (m Model) machineContentOverflows(node domain.Node, box renderBox) bool {
 	innerWidth := box.width - 4
-	if textOverflows(machineIcon+" "+node.Label+" "+StatusSymbol(node.Status), innerWidth) {
+	if textOverflows(machineIcon+" "+node.Label+" ", innerWidth) {
 		return true
 	}
-	if textOverflows(string(node.Status)+" "+node.StatusMessage, innerWidth) {
+	status := string(node.Status)
+	if node.StatusMessage != "" {
+		status += " " + node.StatusMessage
+	}
+	if textOverflows(fmt.Sprintf("%s %s", status, StatusSymbol(node.Status)), innerWidth) {
 		return true
 	}
 	if textOverflows(node.Metadata["ip_address"], innerWidth) {
@@ -1689,6 +2005,17 @@ func abs(value int) int {
 		return -value
 	}
 	return value
+}
+
+func sign(value int) int {
+	switch {
+	case value < 0:
+		return -1
+	case value > 0:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func clamp(value, low, high int) int {

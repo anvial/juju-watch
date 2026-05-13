@@ -16,6 +16,27 @@ import (
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	if m.ssh != nil {
+		switch msg := msg.(type) {
+		case sshStartedMsg:
+			return m.handleSSHStarted(msg)
+		case sshOutputMsg:
+			return m.handleSSHOutput(msg)
+		case sshExitMsg:
+			return m.handleSSHExit(msg)
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			m = m.clampPanForCurrentView()
+			m.resizeSSH()
+			return m, nil
+		case tea.KeyMsg:
+			return m.handleSSHKey(msg)
+		case tea.MouseMsg:
+			return m, nil
+		}
+	}
+
 	if m.searching {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -41,6 +62,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m = m.clampPanForCurrentView()
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case pollTickMsg:
@@ -64,6 +87,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		active := false
 		if m.hasGraph {
 			active = m.animations.Step(&m.graph, m.cfg.NoAnimation)
+		}
+		if m.stepSelectionAnimation() {
+			active = true
 		}
 		if active {
 			cmds = append(cmds, frameCmd())
@@ -101,6 +127,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Search):
 		m.searching = true
 		return m, m.search.Focus()
+	case key.Matches(msg, m.keys.SSH):
+		return m.openSSHForSelected()
 	case key.Matches(msg, m.keys.Focus):
 		m.focusSelected()
 	case key.Matches(msg, m.keys.Up), key.Matches(msg, m.keys.Left):
@@ -203,6 +231,26 @@ func frameCmd() tea.Cmd {
 	})
 }
 
+func (m *Model) setSelectedID(id string) {
+	if m.selectedID == id {
+		return
+	}
+	m.selectedID = id
+	m.selectionFrame = 0
+}
+
+func (m Model) selectionAnimationActive() bool {
+	return m.selectedID != "" && !m.cfg.NoAnimation
+}
+
+func (m *Model) stepSelectionAnimation() bool {
+	if !m.selectionAnimationActive() {
+		return false
+	}
+	m.selectionFrame++
+	return true
+}
+
 func (m *Model) nextView() {
 	switch m.view {
 	case ViewTopology:
@@ -219,7 +267,7 @@ func (m *Model) nextView() {
 func (m *Model) moveSelection(delta int) {
 	ids := m.visibleIDs()
 	if len(ids) == 0 {
-		m.selectedID = ""
+		m.setSelectedID("")
 		return
 	}
 	index := 0
@@ -230,14 +278,14 @@ func (m *Model) moveSelection(delta int) {
 		}
 	}
 	index = (index + delta + len(ids)) % len(ids)
-	m.selectedID = ids[index]
+	m.setSelectedID(ids[index])
 	*m = m.scrollSelectedIntoView()
 }
 
 func (m *Model) ensureSelection() {
 	ids := m.visibleIDs()
 	if len(ids) == 0 {
-		m.selectedID = ""
+		m.setSelectedID("")
 		return
 	}
 	for _, id := range ids {
@@ -245,7 +293,7 @@ func (m *Model) ensureSelection() {
 			return
 		}
 	}
-	m.selectedID = ids[0]
+	m.setSelectedID(ids[0])
 	*m = m.scrollSelectedIntoView()
 }
 
@@ -261,7 +309,7 @@ func (m *Model) selectByQuery(query string) {
 	}
 	for _, id := range m.visibleIDs() {
 		if strings.Contains(strings.ToLower(m.searchText(id)), query) {
-			m.selectedID = id
+			m.setSelectedID(id)
 			*m = m.scrollSelectedIntoView()
 			return
 		}
